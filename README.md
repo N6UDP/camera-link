@@ -5,7 +5,8 @@ CameraLink turns any Android 12+ phone into an HTTP-based IP camera for use on y
 ## Feature Highlights
 - Live MJPEG streaming over HTTP, viewable from any modern browser or VLC
 - Foreground camera service with wake lock for reliable screen-off streaming
-- Built-in HTTP endpoints for `/`, `/stream`, `/snapshot`, and `/test`
+- Built-in HTTP endpoints for `/`, `/stream`, `/snapshot`, `/config`, and `/test`
+- Configurable lens, resolution, and JPEG quality via the in-app UI or URL query overrides
 - **Optional** Tailscale keep-alive (disabled by default, no preconfigured peers)
 - Persistent notifications for both streaming and pinging with quick controls
 - Snapshot capture, multi-viewer support, and MagicDNS hostname resolution
@@ -54,6 +55,24 @@ cd camera-link
 
 Screen-off and background streaming remain active as long as the foreground service runs. Disable battery optimizations for best reliability.
 
+### Camera Settings & URL Overrides
+CameraLink lets you pick the lens, stream resolution, and JPEG quality both from the in-app **Camera Settings** card and via query parameters on any stream request.
+
+In-app (persisted across launches):
+- **Lens**: ultra-wide / wide / telephoto / front (only lenses the device actually exposes are shown). Auxiliary mono/infrared/depth sensors are filtered out automatically.
+- **Resolution**: 480p, 720p (default), or 1080p. The camera snaps to the closest supported sensor size, so a 4:3 sensor may report e.g. 1280×960 for "720p".
+- **JPEG quality**: 1–100 (default 80).
+
+URL overrides (applied globally to the shared stream; take effect on the next frame, with the camera rebinding for lens/resolution changes):
+
+| Param | Values | Example |
+|-------|--------|---------|
+| `camera` | `ultrawide`, `wide`, `telephoto`, `front` | `?camera=ultrawide` |
+| `res` | `480`, `720`, `1080` | `?res=1080` |
+| `q` | `1`–`100` | `?q=70` |
+
+Combine them on `/stream` or `/snapshot`, e.g. `http://<device-ip>:8080/snapshot?camera=telephoto&res=1080&q=70`. Query the current settings and available lenses/resolutions via `GET /config` (returns JSON).
+
 ### Tailscale Keep-Alive (optional)
 CameraLink does **not** require Tailscale and ships with the feature disabled and no preconfigured peers.
 
@@ -66,8 +85,7 @@ CameraLink does **not** require Tailscale and ships with the feature disabled an
 - **Ping interval**: `app/src/main/java/.../TailscalePingService.kt`, `PING_INTERVAL_MS` constant.
 - **Default peers**: `TailscalePinger.kt`, `configuredTailscaleIps` set.
 - **HTTP port**: `CameraStreamingService.kt` and `MainActivity.kt` `port` value (default 8080).
-- **Camera selection**: Update `cameraSelector` in `CameraStreamingService.startCamera()` to choose front or back camera.
-- **JPEG quality / FPS**: Adjust compression quality in `StreamingServer.imageProxyToJpeg()` and sleep duration in the streaming loop respectively.
+- **Camera lens / resolution / quality**: Choose in the in-app **Camera Settings** card or via `?camera=`, `?res=`, `?q=` URL overrides (see Usage). Defaults live in `CameraSettings.kt`; lens classification logic is in `CameraLensResolver.kt`.
 
 ## Testing
 - **Local browser/VLC test**: Start streaming, visit `/stream` or `/snapshot` from another device, or add the URL to VLC via “Open Network Stream.”

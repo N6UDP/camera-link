@@ -112,7 +112,7 @@ class StreamingServer(port: Int) : NanoHTTPD(port) {
             // Convert to JPEG
             val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
             val out = ByteArrayOutputStream()
-            yuvImage.compressToJpeg(Rect(0, 0, width, height), 80, out)
+            yuvImage.compressToJpeg(Rect(0, 0, width, height), CameraSettings.jpegQuality, out)
             val result = out.toByteArray()
 
             return result
@@ -127,6 +127,10 @@ class StreamingServer(port: Int) : NanoHTTPD(port) {
         val uri = session.uri
         println("StreamingServer: Request received for: $uri")
 
+        // Apply any camera/stream overrides supplied as query params, e.g.
+        // /stream?camera=telephoto&res=1080&q=70  (also works on /snapshot)
+        applyOverrides(session)
+
         return when {
             uri == "/" || uri == "/index.html" -> {
                 println("StreamingServer: Serving homepage")
@@ -139,6 +143,10 @@ class StreamingServer(port: Int) : NanoHTTPD(port) {
             uri == "/snapshot" -> {
                 println("StreamingServer: Serving snapshot")
                 serveSnapshot()
+            }
+            uri == "/config" -> {
+                println("StreamingServer: Serving config")
+                serveConfig()
             }
             uri == "/test" -> {
                 println("StreamingServer: Test endpoint called")
@@ -313,6 +321,29 @@ class StreamingServer(port: Int) : NanoHTTPD(port) {
                 errorResponse.toString()
             )
         }
+    }
+
+    private fun applyOverrides(session: IHTTPSession) {
+        val params = session.parameters
+        fun first(key: String): String? = params[key]?.firstOrNull()?.takeIf { it.isNotBlank() }
+
+        first("camera")?.let { CameraLens.fromId(it)?.let(CameraSettings::setLens) }
+        first("res")?.let { StreamResolution.fromId(it)?.let(CameraSettings::setResolution) }
+        first("q")?.let { it.toIntOrNull()?.let(CameraSettings::setJpegQuality) }
+    }
+
+    private fun serveConfig(): Response {
+        val json = JSONObject()
+        json.put("lens", CameraSettings.lens.id)
+        json.put("resolution", CameraSettings.resolution.id)
+        json.put("quality", CameraSettings.jpegQuality)
+        val lenses = JSONArray()
+        CameraLens.entries.forEach { lenses.put(it.id) }
+        json.put("availableLenses", lenses)
+        val resolutions = JSONArray()
+        StreamResolution.entries.forEach { resolutions.put(it.id) }
+        json.put("availableResolutions", resolutions)
+        return newFixedLengthResponse(Response.Status.OK, "application/json", json.toString())
     }
 
     private fun serveHomePage(): Response {

@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import android.util.Log
+import androidx.camera.lifecycle.ProcessCameraProvider
 import com.example.cameralink.ui.theme.CameraLinkTheme
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
@@ -38,6 +39,8 @@ class MainActivity : ComponentActivity() {
 
         // Load any user-configured Tailscale peers from persistent storage.
         TailscalePinger.init(this)
+        // Load persisted camera/stream settings (lens, resolution, JPEG quality).
+        CameraSettings.init(this)
 
         // The Tailscale keep-alive service is OFF by default and only starts if the
         // user has explicitly opted in. CameraLink works fully on a local network
@@ -104,14 +107,14 @@ fun ServiceControlScreen() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var isStreaming by remember { mutableStateOf(false) }
-    var ipAddress by remember { mutableStateOf(getIpAddress()) }
+    var ipAddresses by remember { mutableStateOf(getIpAddresses()) }
     val port = 8080
 
     // Auto-start the streaming service when the screen loads
     LaunchedEffect(Unit) {
         if (!isStreaming) {
             CameraStreamingService.startService(context, port)
-            ipAddress = getIpAddress()
+            ipAddresses = getIpAddresses()
             isStreaming = true
         }
     }
@@ -153,6 +156,11 @@ fun ServiceControlScreen() {
             color = Color.White,
             textAlign = TextAlign.Center
         )
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Camera Settings (lens / resolution / quality)
+        CameraSettingsCard()
+
         Spacer(modifier = Modifier.height(16.dp))
 
         // Tailscale Ping Status Card
@@ -466,18 +474,30 @@ fun ServiceControlScreen() {
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "Stream URL:",
+                        text = if (ipAddresses.size > 1) "Stream URLs:" else "Stream URL:",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.Gray
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "http://$ipAddress:$port",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF4CAF50),
-                        textAlign = TextAlign.Center
-                    )
+                    if (ipAddresses.isEmpty()) {
+                        Text(
+                            text = "Unable to get IP",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF4CAF50),
+                            textAlign = TextAlign.Center
+                        )
+                    } else {
+                        ipAddresses.forEach { ip ->
+                            Text(
+                                text = "http://$ip:$port",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF4CAF50),
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         text = "✅ Camera is streaming in the background\n" +
@@ -517,7 +537,7 @@ fun ServiceControlScreen() {
                     isStreaming = false
                 } else {
                     CameraStreamingService.startService(context, port)
-                    ipAddress = getIpAddress()
+                    ipAddresses = getIpAddresses()
                     isStreaming = true
                 }
             },
@@ -539,7 +559,7 @@ fun ServiceControlScreen() {
             Spacer(modifier = Modifier.height(16.dp))
             Button(
                 onClick = {
-                    ipAddress = getIpAddress()
+                    ipAddresses = getIpAddresses()
                 },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(
@@ -555,16 +575,18 @@ fun ServiceControlScreen() {
     }
 }
 
-private fun getIpAddress(): String {
+private fun getIpAddresses(): List<String> {
+    val results = mutableListOf<String>()
     try {
         val interfaces = NetworkInterface.getNetworkInterfaces()
         for (intf in interfaces) {
+            if (!intf.isUp || intf.isLoopback) continue
             val addrs = intf.inetAddresses
             for (addr in addrs) {
                 if (!addr.isLoopbackAddress) {
                     val hostAddress = addr.hostAddress
                     if (hostAddress != null && hostAddress.indexOf(':') < 0) {
-                        return hostAddress
+                        results.add(hostAddress)
                     }
                 }
             }
@@ -572,7 +594,99 @@ private fun getIpAddress(): String {
     } catch (e: Exception) {
         e.printStackTrace()
     }
-    return "Unable to get IP"
+    return results
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun CameraSettingsCard() {
+    val context = LocalContext.current
+
+    var lens by remember { mutableStateOf(CameraSettings.lens) }
+    var resolution by remember { mutableStateOf(CameraSettings.resolution) }
+    var quality by remember { mutableStateOf(CameraSettings.jpegQuality.toFloat()) }
+    var availableLenses by remember { mutableStateOf(CameraLens.entries.toSet()) }
+
+    LaunchedEffect(Unit) {
+        availableLenses = try {
+            withContext(Dispatchers.IO) {
+                val provider = ProcessCameraProvider.getInstance(context).get()
+                CameraLensResolver.availableLenses(provider)
+            }
+        } catch (e: Exception) {
+            Log.w("CameraSettingsCard", "Could not query lenses: ${e.message}")
+            CameraLens.entries.toSet()
+        }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF2a2a2a))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.Start
+        ) {
+            Text(
+                text = "📷 Camera Settings",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF4CAF50)
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(text = "Lens", style = MaterialTheme.typography.bodyMedium, color = Color.LightGray)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CameraLens.entries.forEach { option ->
+                    FilterChip(
+                        selected = lens == option,
+                        enabled = option in availableLenses,
+                        onClick = {
+                            lens = option
+                            CameraSettings.setLens(option)
+                        },
+                        label = { Text(option.label) }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(text = "Resolution", style = MaterialTheme.typography.bodyMedium, color = Color.LightGray)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StreamResolution.entries.forEach { option ->
+                    FilterChip(
+                        selected = resolution == option,
+                        onClick = {
+                            resolution = option
+                            CameraSettings.setResolution(option)
+                        },
+                        label = { Text(option.id) }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text = "JPEG quality: ${quality.toInt()}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.LightGray
+            )
+            Slider(
+                value = quality,
+                onValueChange = { quality = it },
+                onValueChangeFinished = { CameraSettings.setJpegQuality(quality.toInt()) },
+                valueRange = 10f..100f
+            )
+
+            Text(
+                text = "Tip: append ?camera=telephoto&res=1080&q=70 to the stream/snapshot URL to override.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray
+            )
+        }
+    }
 }
 
 @Composable

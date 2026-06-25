@@ -13,6 +13,8 @@ import android.os.IBinder
 import android.os.PowerManager
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -27,6 +29,7 @@ class CameraStreamingService : LifecycleService() {
     private var wakeLock: PowerManager.WakeLock? = null
     private val cameraExecutor = Executors.newSingleThreadExecutor()
     private var cameraProvider: ProcessCameraProvider? = null
+    private var isStreamingActive = false
 
     companion object {
         private const val NOTIFICATION_ID = 1001
@@ -58,6 +61,13 @@ class CameraStreamingService : LifecycleService() {
     override fun onCreate() {
         super.onCreate()
         TailscalePinger.init(this)
+        CameraSettings.init(this)
+        // Rebind the camera live whenever lens/resolution changes.
+        CameraSettings.onChanged = {
+            ContextCompat.getMainExecutor(this).execute {
+                if (isStreamingActive) startCamera()
+            }
+        }
         createNotificationChannel()
         acquireWakeLock()
     }
@@ -89,6 +99,15 @@ class CameraStreamingService : LifecycleService() {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
         )
 
+        // The start intent can be redelivered (e.g. the activity is recreated on rotation and
+        // re-invokes startService). Don't bind a second server on the same port - that throws
+        // BindException: EADDRINUSE and crashes the process.
+        if (streamingServer != null) {
+            return
+        }
+
+        isStreamingActive = true
+
         // Start streaming server
         streamingServer = StreamingServer(port).apply {
             start()
@@ -107,10 +126,21 @@ class CameraStreamingService : LifecycleService() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             try {
-                cameraProvider = cameraProviderFuture.get()
+                val provider = cameraProviderFuture.get()
+                cameraProvider = provider
+
+                val resolutionSelector = ResolutionSelector.Builder()
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            CameraSettings.resolution.size,
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                        )
+                    )
+                    .build()
 
                 val imageAnalyzer = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .setResolutionSelector(resolutionSelector)
                     .build()
                     .also {
                         it.setAnalyzer(cameraExecutor) { imageProxy ->
@@ -119,14 +149,19 @@ class CameraStreamingService : LifecycleService() {
                         }
                     }
 
-                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                val cameraSelector = try {
+                    CameraLensResolver.selectorFor(provider, CameraSettings.lens)
+                } catch (e: Exception) {
+                    CameraSelector.DEFAULT_BACK_CAMERA
+                }
 
-                cameraProvider?.unbindAll()
-                cameraProvider?.bindToLifecycle(
-                    this,
-                    cameraSelector,
-                    imageAnalyzer
-                )
+                provider.unbindAll()
+                try {
+                    provider.bindToLifecycle(this, cameraSelector, imageAnalyzer)
+                } catch (e: Exception) {
+                    // Requested lens may be unusable on this device; fall back to default.
+                    provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, imageAnalyzer)
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -134,6 +169,7 @@ class CameraStreamingService : LifecycleService() {
     }
 
     private fun stopStreaming() {
+        isStreamingActive = false
         streamingServer?.stop()
         streamingServer = null
         cameraProvider?.unbindAll()
@@ -242,6 +278,7 @@ class CameraStreamingService : LifecycleService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        CameraSettings.onChanged = null
         stopStreaming()
     }
 
