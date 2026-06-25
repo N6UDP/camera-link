@@ -611,7 +611,7 @@ fun CameraSettingsCard() {
         availableLenses = try {
             withContext(Dispatchers.IO) {
                 val provider = ProcessCameraProvider.getInstance(context).get()
-                CameraLensResolver.availableLenses(provider)
+                CameraLensResolver.availableLenses(context, provider)
             }
         } catch (e: Exception) {
             Log.w("CameraSettingsCard", "Could not query lenses: ${e.message}")

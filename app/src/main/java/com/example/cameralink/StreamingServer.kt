@@ -338,7 +338,7 @@ class StreamingServer(port: Int) : NanoHTTPD(port) {
         json.put("resolution", CameraSettings.resolution.id)
         json.put("quality", CameraSettings.jpegQuality)
         val lenses = JSONArray()
-        CameraLens.entries.forEach { lenses.put(it.id) }
+        CameraSettings.availableLenses.forEach { lenses.put(it.id) }
         json.put("availableLenses", lenses)
         val resolutions = JSONArray()
         StreamResolution.entries.forEach { resolutions.put(it.id) }

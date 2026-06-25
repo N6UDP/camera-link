@@ -67,6 +67,12 @@ object CameraSettings {
     @Volatile var jpegQuality: Int = DEFAULT_QUALITY
         private set
 
+    /**
+     * Lenses actually usable on this device, populated by [CameraStreamingService] once the
+     * camera provider is available. Defaults to all lenses until then.
+     */
+    @Volatile var availableLenses: Set<CameraLens> = CameraLens.entries.toSet()
+
     /** Invoked when a capture-affecting setting (lens/resolution) changes. */
     var onChanged: (() -> Unit)? = null
 

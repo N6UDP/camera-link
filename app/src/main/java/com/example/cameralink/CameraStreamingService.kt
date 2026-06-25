@@ -128,6 +128,7 @@ class CameraStreamingService : LifecycleService() {
             try {
                 val provider = cameraProviderFuture.get()
                 cameraProvider = provider
+                CameraSettings.availableLenses = CameraLensResolver.availableLenses(this, provider)
 
                 val resolutionSelector = ResolutionSelector.Builder()
                     .setResolutionStrategy(
@@ -150,7 +151,7 @@ class CameraStreamingService : LifecycleService() {
                     }
 
                 val cameraSelector = try {
-                    CameraLensResolver.selectorFor(provider, CameraSettings.lens)
+                    CameraLensResolver.selectorFor(this, provider, CameraSettings.lens)
                 } catch (e: Exception) {
                     CameraSelector.DEFAULT_BACK_CAMERA
                 }
