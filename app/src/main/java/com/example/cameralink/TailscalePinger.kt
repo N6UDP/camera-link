@@ -1,5 +1,6 @@
 package com.example.cameralink
 
+import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -16,17 +17,27 @@ object TailscalePinger {
     // Tailscale uses 100.64.0.0/10 CGNAT range
     // This means IPs from 100.64.0.0 to 100.127.255.255
 
-    // Manually configured Tailscale peer IPs/hostnames to ping
-    // Add your Tailscale device IPs or MagicDNS names here
-    private val configuredTailscaleIps = mutableSetOf<String>(
-        // Default Tailscale MagicDNS hostnames
-        "erics-macbook-pro-2",
-        "iphone-14-pro-max",
-        "laptop-l2vhnlt6",
-        "whs-macbook-pro-1",
-        "matt.tail08eb66.ts.net",
-        "oppo-cph2697.tail08eb66.ts.net"
-    )
+    // Application context used to persist the user's peer list. Set via init().
+    private var appContext: Context? = null
+
+    // User-configured Tailscale peer IPs/hostnames to ping.
+    // Intentionally empty by default: no hardcoded or third-party hosts are ever
+    // contacted unless the user explicitly adds their own peers.
+    private val configuredTailscaleIps = mutableSetOf<String>()
+
+    /**
+     * Initialise the pinger with an application context and load any peers the
+     * user previously configured. Safe to call multiple times.
+     */
+    fun init(context: Context) {
+        appContext = context.applicationContext
+        configuredTailscaleIps.clear()
+        configuredTailscaleIps.addAll(TailscalePrefs.getPeers(context))
+    }
+
+    private fun persist() {
+        appContext?.let { TailscalePrefs.setPeers(it, configuredTailscaleIps.toSet()) }
+    }
 
     /**
      * Add a Tailscale IP or MagicDNS hostname to the list of targets to ping
@@ -37,6 +48,7 @@ object TailscalePinger {
             // Accept both IPs and hostnames
             if (isTailscaleIp(trimmed) || isValidHostname(trimmed)) {
                 configuredTailscaleIps.add(trimmed)
+                persist()
                 Log.i(TAG, "Added Tailscale target to ping list: $trimmed")
             } else {
                 Log.w(TAG, "Target $trimmed is not a valid Tailscale IP (100.64.0.0 - 100.127.255.255) or hostname")
@@ -49,6 +61,7 @@ object TailscalePinger {
      */
     fun removeTailscaleIp(ip: String) {
         configuredTailscaleIps.remove(ip)
+        persist()
         Log.i(TAG, "Removed Tailscale target from ping list: $ip")
     }
 
@@ -62,6 +75,7 @@ object TailscalePinger {
      */
     fun clearConfiguredIps() {
         configuredTailscaleIps.clear()
+        persist()
         Log.i(TAG, "Cleared all configured Tailscale targets")
     }
 

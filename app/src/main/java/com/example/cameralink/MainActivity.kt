@@ -36,8 +36,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Start periodic Tailscale pinging service (every 15 seconds)
-        TailscalePingService.start(this)
+        // Load any user-configured Tailscale peers from persistent storage.
+        TailscalePinger.init(this)
+
+        // The Tailscale keep-alive service is OFF by default and only starts if the
+        // user has explicitly opted in. CameraLink works fully on a local network
+        // without it.
+        if (TailscalePrefs.isEnabled(this)) {
+            TailscalePingService.start(this)
+        }
 
         setContent {
             CameraLinkTheme {
@@ -114,6 +121,9 @@ fun ServiceControlScreen() {
     var lastPingResults by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     var lastPingTime by remember { mutableStateOf("") }
 
+    // Tailscale opt-in state (off by default; local-network use needs no Tailscale)
+    var tailscaleEnabled by remember { mutableStateOf(TailscalePrefs.isEnabled(context)) }
+
     // Tailscale peer management
     var showAddIpDialog by remember { mutableStateOf(false) }
     var newIpText by remember { mutableStateOf("") }
@@ -162,7 +172,50 @@ fun ServiceControlScreen() {
                 )
                 Spacer(modifier = Modifier.height(12.dp))
 
-                if (lastPingResults.isEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Enable keep-alive",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color.LightGray
+                    )
+                    Switch(
+                        checked = tailscaleEnabled,
+                        onCheckedChange = { enabled ->
+                            tailscaleEnabled = enabled
+                            TailscalePrefs.setEnabled(context, enabled)
+                            if (enabled) {
+                                TailscalePingService.start(context)
+                            } else {
+                                TailscalePingService.stop(context)
+                                lastPingResults = emptyMap()
+                                lastPingTime = ""
+                            }
+                        }
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Off by default. CameraLink streams over your local network " +
+                           "without Tailscale. Enable this only if you use Tailscale and " +
+                           "want CameraLink to keep your own peers awake.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (!tailscaleEnabled) {
+                    Text(
+                        text = "Keep-alive disabled",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.Gray,
+                        textAlign = TextAlign.Center
+                    )
+                } else if (lastPingResults.isEmpty()) {
                     Text(
                         text = "Auto-pinging every 15 seconds\nTap button below to ping manually",
                         style = MaterialTheme.typography.bodyMedium,
@@ -242,7 +295,7 @@ fun ServiceControlScreen() {
                             }
                         }
                     },
-                    enabled = !isPinging,
+                    enabled = !isPinging && tailscaleEnabled,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color(0xFF4CAF50)

@@ -16,7 +16,7 @@ class StreamingServer(port: Int) : NanoHTTPD(port) {
 
     private val currentFrame = AtomicReference<ByteArray>()
 
-    @androidx.camera.core.ExperimentalGetImage
+    @androidx.annotation.OptIn(markerClass = [androidx.camera.core.ExperimentalGetImage::class])
     fun updateFrame(imageProxy: ImageProxy) {
         try {
             val jpegBytes = imageProxyToJpeg(imageProxy)
@@ -32,7 +32,7 @@ class StreamingServer(port: Int) : NanoHTTPD(port) {
         }
     }
 
-    @androidx.camera.core.ExperimentalGetImage
+    @androidx.annotation.OptIn(markerClass = [androidx.camera.core.ExperimentalGetImage::class])
     private fun imageProxyToJpeg(imageProxy: ImageProxy): ByteArray {
         try {
             val image = imageProxy.image

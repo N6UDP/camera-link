@@ -1,22 +1,23 @@
 # CameraLink
 
-CameraLink turns any Android 12+ phone into an HTTP-based IP camera with an optional Tailscale keep-alive service. The app keeps streaming even with the screen off, exposes a browser-friendly MJPEG feed, and periodically pings configured Tailscale peers so remote access stays responsive.
+CameraLink turns any Android 12+ phone into an HTTP-based IP camera for use on your **local network**. The app keeps streaming even with the screen off and exposes a browser-friendly MJPEG feed. An **optional, off-by-default** Tailscale keep-alive service can ping your own peers if you choose to enable it. CameraLink contains no analytics or telemetry and never contacts any server outside your network unless you explicitly add Tailscale peers.
 
 ## Feature Highlights
 - Live MJPEG streaming over HTTP, viewable from any modern browser or VLC
 - Foreground camera service with wake lock for reliable screen-off streaming
 - Built-in HTTP endpoints for `/`, `/stream`, `/snapshot`, and `/test`
-- Background Tailscale ping service with configurable peers and interval
+- **Optional** Tailscale keep-alive (disabled by default, no preconfigured peers)
 - Persistent notifications for both streaming and pinging with quick controls
 - Snapshot capture, multi-viewer support, and MagicDNS hostname resolution
+- No telemetry, analytics, or third-party network calls
 
 ## Architecture Overview
-- **CameraStreamingService**: Foreground service that owns CameraX capture, wake locks, and lifecycle.
+- **CameraStreamingService**: Foreground service (type `camera`) that owns CameraX capture, wake locks, and lifecycle.
 - **StreamingServer**: Embedded NanoHTTPD server that serves frames as MJPEG or single JPEG snapshots.
-- **TailscalePingService + TailscalePinger**: Foreground service that resolves peers, issues ICMP pings every 15 seconds by default, and updates status in notifications/UI.
+- **TailscalePingService + TailscalePinger**: Optional foreground service (type `specialUse`, off by default) that resolves user-added peers and issues ICMP pings, updating status in notifications/UI.
 - **MainActivity**: Compose UI for starting/stopping services, showing stream URLs, peer status, and editing peer lists.
 
-The app targets Android API level 31+ and is written entirely in Kotlin with Jetpack Compose and CameraX.
+The app targets Android API level 31+ (compiles against the latest SDK) and is written entirely in Kotlin with Jetpack Compose and CameraX.
 
 ## Getting Started
 
@@ -53,11 +54,13 @@ cd camera-link
 
 Screen-off and background streaming remain active as long as the foreground service runs. Disable battery optimizations for best reliability.
 
-### Tailscale Keep-Alive
-1. TailscalePingService starts automatically (configurable in `MainActivity`).
-2. Every 15 seconds (default) it resolves configured peers (MagicDNS or 100.64.0.0/10 addresses) and pings them.
-3. Status appears in app and notification (successful/failed counts).
-4. Use the **Manage Tailscale Peers** section to add or remove peers at runtime.
+### Tailscale Keep-Alive (optional)
+CameraLink does **not** require Tailscale and ships with the feature disabled and no preconfigured peers.
+
+1. In the **Tailscale Connections** card, toggle **Enable keep-alive** on.
+2. Use the **Manage Tailscale Peers** section to add your own peers (MagicDNS names or 100.64.0.0/10 addresses). Peers are stored locally and persist across launches.
+3. While enabled, a foreground service pings your configured peers every 15 seconds and shows successful/failed counts in the app and notification.
+4. Toggle it off at any time to stop the service. With no peers configured, nothing is pinged.
 
 ## Configuration
 - **Ping interval**: `app/src/main/java/.../TailscalePingService.kt`, `PING_INTERVAL_MS` constant.

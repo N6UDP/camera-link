@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -14,6 +15,7 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import java.net.NetworkInterface
@@ -55,6 +57,7 @@ class CameraStreamingService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
+        TailscalePinger.init(this)
         createNotificationChannel()
         acquireWakeLock()
     }
@@ -79,7 +82,12 @@ class CameraStreamingService : LifecycleService() {
     private fun startStreaming(port: Int) {
         // Start foreground service with notification
         val notification = createNotification("Starting camera stream...", getIpAddress(), port)
-        startForeground(NOTIFICATION_ID, notification)
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            notification,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+        )
 
         // Start streaming server
         streamingServer = StreamingServer(port).apply {

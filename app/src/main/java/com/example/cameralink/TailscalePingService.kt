@@ -7,12 +7,14 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -52,11 +54,17 @@ class TailscalePingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        TailscalePinger.init(this)
         createNotificationChannel()
         Log.i(TAG, "TailscalePingService created")
 
         // Start as foreground service
-        startForeground(NOTIFICATION_ID, createNotification("Starting Tailscale ping service...", 0, 0))
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            createNotification("Starting Tailscale ping service...", 0, 0),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        )
 
         startPinging()
     }
