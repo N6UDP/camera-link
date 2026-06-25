@@ -7,6 +7,7 @@ CameraLink turns any Android 12+ phone into an HTTP-based IP camera for use on y
 - Foreground camera service with wake lock for reliable screen-off streaming
 - Built-in HTTP endpoints for `/`, `/stream`, `/snapshot`, `/config`, and `/test`
 - Configurable lens, resolution, and JPEG quality via the in-app UI or URL query overrides
+- In-app live preview to frame the shot and compare lenses before/while streaming
 - **Optional** Tailscale keep-alive (disabled by default, no preconfigured peers)
 - Persistent notifications for both streaming and pinging with quick controls
 - Snapshot capture, multi-viewer support, and MagicDNS hostname resolution
@@ -72,6 +73,9 @@ URL overrides (applied globally to the shared stream; take effect on the next fr
 | `q` | `1`–`100` | `?q=70` |
 
 Combine them on `/stream` or `/snapshot`, e.g. `http://<device-ip>:8080/snapshot?camera=telephoto&res=1080&q=70`. Query the current settings and available lenses/resolutions via `GET /config` (returns JSON).
+
+### In-App Live Preview
+The **Camera Settings** card has a **Show Preview** toggle that displays the live camera feed directly in the app. It renders the same local MJPEG stream (`http://127.0.0.1:8080/stream`) in an embedded WebView, so it stays in sync with the lens/resolution/quality you select and never opens a second camera session. The preview traffic is loopback-only (cleartext is permitted solely for `127.0.0.1`/`localhost` via `network_security_config.xml`); nothing leaves the device.
 
 ### Tailscale Keep-Alive (optional)
 CameraLink does **not** require Tailscale and ships with the feature disabled and no preconfigured peers.

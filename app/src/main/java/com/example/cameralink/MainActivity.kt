@@ -19,6 +19,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.util.Log
 import androidx.camera.lifecycle.ProcessCameraProvider
 import com.example.cameralink.ui.theme.CameraLinkTheme
@@ -606,6 +609,7 @@ fun CameraSettingsCard() {
     var resolution by remember { mutableStateOf(CameraSettings.resolution) }
     var quality by remember { mutableStateOf(CameraSettings.jpegQuality.toFloat()) }
     var availableLenses by remember { mutableStateOf(CameraLens.entries.toSet()) }
+    var showPreview by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         availableLenses = try {
@@ -634,6 +638,49 @@ fun CameraSettingsCard() {
                 color = Color(0xFF4CAF50)
             )
             Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedButton(
+                onClick = { showPreview = !showPreview },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (showPreview) "👁 Hide Preview" else "👁 Show Preview")
+            }
+            if (showPreview) {
+                Spacer(modifier = Modifier.height(8.dp))
+                AndroidView(
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            webViewClient = WebViewClient()
+                            settings.useWideViewPort = true
+                            settings.loadWithOverviewMode = true
+                            setBackgroundColor(android.graphics.Color.BLACK)
+                            // Render the local MJPEG stream via an <img> tag, which auto-updates
+                            // as frames arrive and reflects the currently selected lens/resolution.
+                            val html = "<html><body style=\"margin:0;background:#000;\">" +
+                                "<img src=\"http://127.0.0.1:8080/stream\" " +
+                                "style=\"width:100%;height:auto;display:block;\"/></body></html>"
+                            loadDataWithBaseURL(
+                                "http://127.0.0.1:8080/",
+                                html,
+                                "text/html",
+                                "utf-8",
+                                null
+                            )
+                        }
+                    },
+                    onRelease = { it.destroy() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(240.dp)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Live preview of the local stream. Switch lenses below to compare.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
 
             Text(text = "Lens", style = MaterialTheme.typography.bodyMedium, color = Color.LightGray)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

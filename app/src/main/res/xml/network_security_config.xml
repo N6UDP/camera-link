@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    CameraLink serves its stream over plain HTTP on the local network. Cleartext is
+    permitted only for the loopback address so the in-app preview WebView can render
+    the local MJPEG stream; all other cleartext traffic remains disabled.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>
