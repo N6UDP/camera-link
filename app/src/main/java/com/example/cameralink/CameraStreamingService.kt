@@ -41,6 +41,8 @@ class CameraStreamingService : LifecycleService() {
     @Volatile private var lastTorchToggle = 0L
     // Consecutive evaluations favouring a flip; only touched on the analyzer thread.
     private var torchPendingCount = 0
+    // Last brightness percentage actually pushed to the torch (-1 = none yet / needs reapply).
+    private var appliedTorchPercent = -1
 
     companion object {
         private const val NOTIFICATION_ID = 1001
@@ -54,14 +56,13 @@ class CameraStreamingService : LifecycleService() {
         // The torch itself brightens the frame we measure, so naive thresholds oscillate
         // (torch on -> frame bright -> torch off -> frame dark -> torch on ...). To prevent
         // visible flashing we combine three guards:
-        //   1. Wide hysteresis - turn ON only when clearly dark, and OFF only when the scene is
-        //      very bright (well above what the torch alone produces), so a flash-lit dark room
-        //      keeps the torch on instead of cycling.
+        //   1. Hysteresis - the user-set "dark" threshold turns the torch ON; the OFF threshold
+        //      is that value plus TORCH_HYSTERESIS_GAP, well above what the torch alone produces,
+        //      so a flash-lit dark scene keeps the torch on instead of cycling.
         //   2. A minimum hold time after any change, bounding how often the torch can flip.
         //   3. A confirmation count - the opposite condition must persist for several consecutive
         //      evaluations before we act, ignoring brief fluctuations.
-        private const val TORCH_ON_LUMA = 40
-        private const val TORCH_OFF_LUMA = 160
+        private const val TORCH_HYSTERESIS_GAP = 120
         private const val TORCH_EVAL_INTERVAL_MS = 1000L
         private const val TORCH_MIN_HOLD_MS = 6000L
         private const val TORCH_CONFIRM_COUNT = 3
@@ -198,6 +199,14 @@ class CameraStreamingService : LifecycleService() {
                     // Requested lens may be unusable on this device; fall back to default.
                     provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, imageAnalyzer)
                 }
+                // Publish torch-brightness capability for the UI / config. Reset so the new
+                // camera's strength gets applied on the next torch enable.
+                appliedTorchPercent = -1
+                CameraSettings.maxTorchLevel = try {
+                    camera?.cameraInfo?.maxTorchStrengthLevel ?: 0
+                } catch (e: Exception) {
+                    0
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -223,15 +232,22 @@ class CameraStreamingService : LifecycleService() {
             return
         }
 
+        // Keep the torch brightness in sync with the setting while it's on (cheap: only acts
+        // when the requested percentage actually changed).
+        if (torchOn) applyTorchStrength(cam)
+
         val now = System.currentTimeMillis()
         if (now - lastTorchEval < TORCH_EVAL_INTERVAL_MS) return
         lastTorchEval = now
 
+        // The "dark" threshold is user-adjustable; derive the "bright enough to switch off"
+        // threshold from it with a fixed gap to preserve hysteresis (the torch's own light must
+        // not be able to push the reading back across the off-threshold).
+        val onThreshold = CameraSettings.autoFlashThreshold
+        val offThreshold = (onThreshold + TORCH_HYSTERESIS_GAP).coerceAtMost(250)
+
         val luma = averageLuminance(imageProxy)
-        // With the torch ON we only switch off once the scene is very bright (real ambient light
-        // returned); with it OFF we switch on only when clearly dark. The wide gap means the
-        // torch's own contribution can't flip the decision back.
-        val wantOn = if (torchOn) luma < TORCH_OFF_LUMA else luma < TORCH_ON_LUMA
+        val wantOn = if (torchOn) luma < offThreshold else luma < onThreshold
 
         if (wantOn == torchOn) {
             torchPendingCount = 0
@@ -243,10 +259,33 @@ class CameraStreamingService : LifecycleService() {
         if (now - lastTorchToggle < TORCH_MIN_HOLD_MS) return
         if (++torchPendingCount < TORCH_CONFIRM_COUNT) return
 
-        cam.cameraControl.enableTorch(wantOn)
+        if (wantOn) {
+            applyTorchStrength(cam)
+            cam.cameraControl.enableTorch(true)
+        } else {
+            cam.cameraControl.enableTorch(false)
+        }
         torchOn = wantOn
         lastTorchToggle = now
         torchPendingCount = 0
+    }
+
+    /**
+     * Apply the configured brightness percentage to the torch, when the device supports adjustable
+     * torch strength. No-op on devices that only offer on/off, or when the value hasn't changed.
+     */
+    private fun applyTorchStrength(cam: Camera) {
+        val maxLevel = CameraSettings.maxTorchLevel
+        if (maxLevel <= 1) return // unsupported (-1/0) or single-level: nothing to adjust
+        val percent = CameraSettings.flashStrengthPercent
+        if (percent == appliedTorchPercent) return
+        val level = Math.round(percent / 100f * maxLevel).coerceIn(1, maxLevel)
+        try {
+            cam.cameraControl.setTorchStrengthLevel(level)
+            appliedTorchPercent = percent
+        } catch (e: Exception) {
+            // Strength control unsupported/failed on this camera; ignore and keep on/off behavior.
+        }
     }
 
     /** Average brightness (0..255) of a sparse sample of the image's luma plane. */

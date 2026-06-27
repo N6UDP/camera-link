@@ -49,9 +49,9 @@ dependencies {
     implementation("androidx.compose.material3:material3")
 
     // CameraX dependencies
-    implementation("androidx.camera:camera-camera2:1.4.1")
-    implementation("androidx.camera:camera-lifecycle:1.4.1")
-    implementation("androidx.camera:camera-view:1.4.1")
+    implementation("androidx.camera:camera-camera2:1.5.3")
+    implementation("androidx.camera:camera-lifecycle:1.5.3")
+    implementation("androidx.camera:camera-view:1.5.3")
 
     // HTTP Server for streaming
     implementation("org.nanohttpd:nanohttpd:2.3.1")

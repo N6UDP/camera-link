@@ -8,7 +8,8 @@ CameraLink turns any Android 12+ phone into an HTTP-based IP camera for use on y
 - Built-in HTTP endpoints for `/`, `/stream`, `/snapshot`, `/config`, and `/test`
 - Configurable lens, resolution, and JPEG quality via the in-app UI or URL query overrides
 - In-app live preview to frame the shot and compare lenses before/while streaming
-- Optional auto-flash that turns on the torch in low light (disabled by default)
+- Optional auto-flash that turns on the torch in low light (disabled by default), with an adjustable darkness threshold and (where the device supports it) flash brightness
+- Optional access key to gate the HTTP server on shared networks (disabled by default)
 - **Optional** Tailscale keep-alive (disabled by default, no preconfigured peers)
 - Persistent notifications for both streaming and pinging with quick controls
 - Snapshot capture, multi-viewer support, and MagicDNS hostname resolution
@@ -65,6 +66,9 @@ In-app (persisted across launches):
 - **Resolution**: 480p, 720p (default), or 1080p. The camera snaps to the closest supported sensor size, so a 4:3 sensor may report e.g. 1280×960 for "720p".
 - **JPEG quality**: 1–100 (default 80).
 - **Auto flash in low light** (default **off**): when enabled, the streaming service turns the camera torch on automatically while the scene is too dark and off again once it brightens. Uses hysteresis and throttling to avoid flickering, and only acts on a back lens that has a flash unit (it never engages on the front camera or a lens without a torch).
+  - **Low-light threshold** (default 40, range 5–150): how dark the scene must get before the torch engages. Raise it if the torch stays off in dim light, lower it if it comes on too eagerly. Tune for your camera's position/framing.
+  - **Flash brightness** (1–100%, default 100): shown only on devices/lenses whose camera reports adjustable torch strength (requires CameraX 1.5+ and HAL support). Many phones — including the OnePlus 8T — only support on/off torch, in which case the slider is hidden.
+- **Access key** (default empty = disabled): when set, every HTTP request from another device on the network must supply the key via `?key=<key>` or an `X-Access-Key` header; unauthorized requests get `401`. The in-app preview and the phone itself (loopback `127.0.0.1`/`localhost`) are always allowed. This is a lightweight LAN gate sent in cleartext over HTTP — it is **not** transport encryption.
 
 URL overrides (applied globally to the shared stream; take effect on the next frame, with the camera rebinding for lens/resolution changes):
 
@@ -74,8 +78,12 @@ URL overrides (applied globally to the shared stream; take effect on the next fr
 | `res` | `480`, `720`, `1080` | `?res=1080` |
 | `q` | `1`–`100` | `?q=70` |
 | `autoflash` | `1`/`0`, `on`/`off`, `true`/`false` | `?autoflash=1` |
+| `flashthreshold` | `5`–`150` | `?flashthreshold=70` |
+| `flashlevel` | `1`–`100` (ignored if the device can't adjust torch strength) | `?flashlevel=50` |
 
-Combine them on `/stream` or `/snapshot`, e.g. `http://<device-ip>:8080/snapshot?camera=telephoto&res=1080&q=70`. Query the current settings and available lenses/resolutions via `GET /config` (returns JSON, including the current `autoFlash` state).
+> The access key is **not** a URL override — it can only be set in the app. Authorized requests still pass it as `?key=<key>` (or the `X-Access-Key` header).
+
+Combine them on `/stream` or `/snapshot`, e.g. `http://<device-ip>:8080/snapshot?camera=telephoto&res=1080&q=70`. Query the current settings and available lenses/resolutions via `GET /config` (returns JSON, including `autoFlash`, `autoFlashThreshold`, `flashStrength`, `flashStrengthAdjustable`, `maxTorchLevel`, and `accessKeyRequired`).
 
 ### In-App Live Preview
 The **Camera Settings** card has a **Show Preview** toggle that displays the live camera feed directly in the app. It renders the same local MJPEG stream (`http://127.0.0.1:8080/stream`) in an embedded WebView, so it stays in sync with the lens/resolution/quality you select and never opens a second camera session. The preview traffic is loopback-only (cleartext is permitted solely for `127.0.0.1`/`localhost` via `network_security_config.xml`); nothing leaves the device.

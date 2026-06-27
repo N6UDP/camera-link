@@ -127,6 +127,17 @@ class StreamingServer(port: Int) : NanoHTTPD(port) {
         val uri = session.uri
         println("StreamingServer: Request received for: $uri")
 
+        // Optional access lockdown: when a key is set, non-loopback clients must present it.
+        // Enforced before applying overrides so an unauthorized client can't change settings.
+        if (!isAuthorized(session)) {
+            println("StreamingServer: 401 - missing/invalid access key from ${session.remoteIpAddress}")
+            return newFixedLengthResponse(
+                Response.Status.UNAUTHORIZED,
+                MIME_PLAINTEXT,
+                "Unauthorized: missing or invalid access key. Provide ?key=... or an X-Access-Key header."
+            )
+        }
+
         // Apply any camera/stream overrides supplied as query params, e.g.
         // /stream?camera=telephoto&res=1080&q=70  (also works on /snapshot)
         applyOverrides(session)
@@ -331,6 +342,8 @@ class StreamingServer(port: Int) : NanoHTTPD(port) {
         first("res")?.let { StreamResolution.fromId(it)?.let(CameraSettings::setResolution) }
         first("q")?.let { it.toIntOrNull()?.let(CameraSettings::setJpegQuality) }
         first("autoflash")?.let { parseBool(it)?.let(CameraSettings::setAutoFlash) }
+        first("flashthreshold")?.let { it.toIntOrNull()?.let(CameraSettings::setAutoFlashThreshold) }
+        first("flashlevel")?.let { it.toIntOrNull()?.let(CameraSettings::setFlashStrengthPercent) }
     }
 
     private fun parseBool(value: String): Boolean? = when (value.trim().lowercase()) {
@@ -339,12 +352,51 @@ class StreamingServer(port: Int) : NanoHTTPD(port) {
         else -> null
     }
 
+    /**
+     * Returns true if the request may proceed. When no access key is configured, everything is
+     * allowed. When a key is set, loopback (the in-app preview and on-device clients) is always
+     * allowed; any other client must supply the matching key via `?key=` or an `X-Access-Key`
+     * header. The shared key travels in cleartext over HTTP, so this is a lightweight LAN gate,
+     * not transport security.
+     */
+    private fun isAuthorized(session: IHTTPSession): Boolean {
+        val key = CameraSettings.accessKey
+        if (key.isEmpty()) return true
+
+        val remote = session.remoteIpAddress ?: ""
+        if (remote == "127.0.0.1" || remote == "::1" || remote == "0:0:0:0:0:0:0:1" ||
+            remote.equals("localhost", ignoreCase = true)
+        ) {
+            return true
+        }
+
+        val provided = session.parameters["key"]?.firstOrNull()
+            ?: session.headers["x-access-key"]
+        return provided != null && constantTimeEquals(provided, key)
+    }
+
+    /** Length-aware constant-time string comparison to avoid leaking the key via timing. */
+    private fun constantTimeEquals(a: String, b: String): Boolean {
+        val ab = a.toByteArray(Charsets.UTF_8)
+        val bb = b.toByteArray(Charsets.UTF_8)
+        var result = ab.size xor bb.size
+        for (i in ab.indices) {
+            result = result or (ab[i].toInt() xor bb[i % bb.size.coerceAtLeast(1)].toInt())
+        }
+        return result == 0
+    }
+
     private fun serveConfig(): Response {
         val json = JSONObject()
         json.put("lens", CameraSettings.lens.id)
         json.put("resolution", CameraSettings.resolution.id)
         json.put("quality", CameraSettings.jpegQuality)
         json.put("autoFlash", CameraSettings.autoFlash)
+        json.put("autoFlashThreshold", CameraSettings.autoFlashThreshold)
+        json.put("flashStrength", CameraSettings.flashStrengthPercent)
+        json.put("flashStrengthAdjustable", CameraSettings.maxTorchLevel > 1)
+        json.put("maxTorchLevel", CameraSettings.maxTorchLevel)
+        json.put("accessKeyRequired", CameraSettings.accessKey.isNotEmpty())
         val lenses = JSONArray()
         CameraSettings.availableLenses.forEach { lenses.put(it.id) }
         json.put("availableLenses", lenses)

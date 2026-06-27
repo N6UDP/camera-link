@@ -609,6 +609,10 @@ fun CameraSettingsCard() {
     var resolution by remember { mutableStateOf(CameraSettings.resolution) }
     var quality by remember { mutableStateOf(CameraSettings.jpegQuality.toFloat()) }
     var autoFlash by remember { mutableStateOf(CameraSettings.autoFlash) }
+    var flashThreshold by remember { mutableStateOf(CameraSettings.autoFlashThreshold.toFloat()) }
+    var flashStrength by remember { mutableStateOf(CameraSettings.flashStrengthPercent.toFloat()) }
+    var flashAdjustable by remember { mutableStateOf(CameraSettings.maxTorchLevel > 1) }
+    var accessKey by remember { mutableStateOf(CameraSettings.accessKey) }
     var availableLenses by remember { mutableStateOf(CameraLens.entries.toSet()) }
     var showPreview by remember { mutableStateOf(false) }
 
@@ -622,6 +626,8 @@ fun CameraSettingsCard() {
             Log.w("CameraSettingsCard", "Could not query lenses: ${e.message}")
             CameraLens.entries.toSet()
         }
+        // The service publishes the torch capability after it binds the camera.
+        flashAdjustable = CameraSettings.maxTorchLevel > 1
     }
 
     Card(
@@ -754,6 +760,65 @@ fun CameraSettingsCard() {
                     }
                 )
             }
+
+            if (autoFlash) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Low-light threshold: ${flashThreshold.toInt()} (higher = turns on sooner)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.LightGray
+                )
+                Slider(
+                    value = flashThreshold,
+                    onValueChange = { flashThreshold = it },
+                    onValueChangeFinished = { CameraSettings.setAutoFlashThreshold(flashThreshold.toInt()) },
+                    valueRange = CameraSettings.MIN_AUTO_FLASH_THRESHOLD.toFloat()..CameraSettings.MAX_AUTO_FLASH_THRESHOLD.toFloat()
+                )
+                Text(
+                    text = "Tune this for your camera position - raise it if the torch stays off in dim light, lower it if it comes on too eagerly.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+
+                if (flashAdjustable) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Flash brightness: ${flashStrength.toInt()}%",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.LightGray
+                    )
+                    Slider(
+                        value = flashStrength,
+                        onValueChange = { flashStrength = it },
+                        onValueChangeFinished = { CameraSettings.setFlashStrengthPercent(flashStrength.toInt()) },
+                        valueRange = 1f..100f
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                text = "Access key (optional)",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.LightGray
+            )
+            OutlinedTextField(
+                value = accessKey,
+                onValueChange = {
+                    accessKey = it
+                    CameraSettings.setAccessKey(it)
+                },
+                singleLine = true,
+                placeholder = { Text("Leave blank to allow any device on the LAN") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                text = "When set, viewers must append ?key=<key> (or send an X-Access-Key header). " +
+                    "The in-app preview and this device are always allowed. Sent in cleartext over HTTP - a LAN gate, not encryption.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray
+            )
 
             Spacer(modifier = Modifier.height(8.dp))
 
