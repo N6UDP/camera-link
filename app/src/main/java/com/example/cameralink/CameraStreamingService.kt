@@ -38,6 +38,9 @@ class CameraStreamingService : LifecycleService() {
     // the main thread during (re)bind, so these must be volatile for cross-thread visibility.
     @Volatile private var torchOn = false
     @Volatile private var lastTorchEval = 0L
+    @Volatile private var lastTorchToggle = 0L
+    // Consecutive evaluations favouring a flip; only touched on the analyzer thread.
+    private var torchPendingCount = 0
 
     companion object {
         private const val NOTIFICATION_ID = 1001
@@ -47,12 +50,21 @@ class CameraStreamingService : LifecycleService() {
         const val EXTRA_PORT = "port"
 
         // Auto-flash tuning. Average Y-plane luminance is 0 (black) .. 255 (white).
-        // Hysteresis: turn the torch ON only when clearly dark, and OFF only once the
-        // scene is comfortably bright, so it doesn't oscillate. Evaluations are throttled
-        // so the torch toggles at most about once per interval.
-        private const val TORCH_ON_LUMA = 45
-        private const val TORCH_OFF_LUMA = 110
-        private const val TORCH_EVAL_INTERVAL_MS = 1500L
+        //
+        // The torch itself brightens the frame we measure, so naive thresholds oscillate
+        // (torch on -> frame bright -> torch off -> frame dark -> torch on ...). To prevent
+        // visible flashing we combine three guards:
+        //   1. Wide hysteresis - turn ON only when clearly dark, and OFF only when the scene is
+        //      very bright (well above what the torch alone produces), so a flash-lit dark room
+        //      keeps the torch on instead of cycling.
+        //   2. A minimum hold time after any change, bounding how often the torch can flip.
+        //   3. A confirmation count - the opposite condition must persist for several consecutive
+        //      evaluations before we act, ignoring brief fluctuations.
+        private const val TORCH_ON_LUMA = 40
+        private const val TORCH_OFF_LUMA = 160
+        private const val TORCH_EVAL_INTERVAL_MS = 1000L
+        private const val TORCH_MIN_HOLD_MS = 6000L
+        private const val TORCH_CONFIRM_COUNT = 3
 
         fun startService(context: Context, port: Int = 8080) {
             val intent = Intent(context, CameraStreamingService::class.java).apply {
@@ -178,6 +190,8 @@ class CameraStreamingService : LifecycleService() {
                 // re-evaluates from scratch against the newly bound camera.
                 torchOn = false
                 lastTorchEval = 0L
+                lastTorchToggle = 0L
+                torchPendingCount = 0
                 camera = try {
                     provider.bindToLifecycle(this, cameraSelector, imageAnalyzer)
                 } catch (e: Exception) {
@@ -203,7 +217,9 @@ class CameraStreamingService : LifecycleService() {
             if (torchOn) {
                 cam.cameraControl.enableTorch(false)
                 torchOn = false
+                lastTorchToggle = System.currentTimeMillis()
             }
+            torchPendingCount = 0
             return
         }
 
@@ -212,11 +228,25 @@ class CameraStreamingService : LifecycleService() {
         lastTorchEval = now
 
         val luma = averageLuminance(imageProxy)
-        val shouldBeOn = if (torchOn) luma < TORCH_OFF_LUMA else luma < TORCH_ON_LUMA
-        if (shouldBeOn != torchOn) {
-            cam.cameraControl.enableTorch(shouldBeOn)
-            torchOn = shouldBeOn
+        // With the torch ON we only switch off once the scene is very bright (real ambient light
+        // returned); with it OFF we switch on only when clearly dark. The wide gap means the
+        // torch's own contribution can't flip the decision back.
+        val wantOn = if (torchOn) luma < TORCH_OFF_LUMA else luma < TORCH_ON_LUMA
+
+        if (wantOn == torchOn) {
+            torchPendingCount = 0
+            return
         }
+
+        // A flip is wanted. Respect a minimum hold time, then require the condition to persist
+        // for several consecutive evaluations before acting.
+        if (now - lastTorchToggle < TORCH_MIN_HOLD_MS) return
+        if (++torchPendingCount < TORCH_CONFIRM_COUNT) return
+
+        cam.cameraControl.enableTorch(wantOn)
+        torchOn = wantOn
+        lastTorchToggle = now
+        torchPendingCount = 0
     }
 
     /** Average brightness (0..255) of a sparse sample of the image's luma plane. */
