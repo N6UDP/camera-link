@@ -330,6 +330,13 @@ class StreamingServer(port: Int) : NanoHTTPD(port) {
         first("camera")?.let { CameraLens.fromId(it)?.let(CameraSettings::setLens) }
         first("res")?.let { StreamResolution.fromId(it)?.let(CameraSettings::setResolution) }
         first("q")?.let { it.toIntOrNull()?.let(CameraSettings::setJpegQuality) }
+        first("autoflash")?.let { parseBool(it)?.let(CameraSettings::setAutoFlash) }
+    }
+
+    private fun parseBool(value: String): Boolean? = when (value.trim().lowercase()) {
+        "1", "true", "on", "yes", "auto" -> true
+        "0", "false", "off", "no" -> false
+        else -> null
     }
 
     private fun serveConfig(): Response {
@@ -337,6 +344,7 @@ class StreamingServer(port: Int) : NanoHTTPD(port) {
         json.put("lens", CameraSettings.lens.id)
         json.put("resolution", CameraSettings.resolution.id)
         json.put("quality", CameraSettings.jpegQuality)
+        json.put("autoFlash", CameraSettings.autoFlash)
         val lenses = JSONArray()
         CameraSettings.availableLenses.forEach { lenses.put(it.id) }
         json.put("availableLenses", lenses)

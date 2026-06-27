@@ -11,8 +11,10 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -29,7 +31,13 @@ class CameraStreamingService : LifecycleService() {
     private var wakeLock: PowerManager.WakeLock? = null
     private val cameraExecutor = Executors.newSingleThreadExecutor()
     private var cameraProvider: ProcessCameraProvider? = null
+    @Volatile private var camera: Camera? = null
     private var isStreamingActive = false
+
+    // Auto-flash (torch in low light) state. Read on the camera-analyzer thread and written on
+    // the main thread during (re)bind, so these must be volatile for cross-thread visibility.
+    @Volatile private var torchOn = false
+    @Volatile private var lastTorchEval = 0L
 
     companion object {
         private const val NOTIFICATION_ID = 1001
@@ -37,6 +45,14 @@ class CameraStreamingService : LifecycleService() {
         const val ACTION_START_STREAMING = "com.example.cameralink.START_STREAMING"
         const val ACTION_STOP_STREAMING = "com.example.cameralink.STOP_STREAMING"
         const val EXTRA_PORT = "port"
+
+        // Auto-flash tuning. Average Y-plane luminance is 0 (black) .. 255 (white).
+        // Hysteresis: turn the torch ON only when clearly dark, and OFF only once the
+        // scene is comfortably bright, so it doesn't oscillate. Evaluations are throttled
+        // so the torch toggles at most about once per interval.
+        private const val TORCH_ON_LUMA = 45
+        private const val TORCH_OFF_LUMA = 110
+        private const val TORCH_EVAL_INTERVAL_MS = 1500L
 
         fun startService(context: Context, port: Int = 8080) {
             val intent = Intent(context, CameraStreamingService::class.java).apply {
@@ -146,6 +162,7 @@ class CameraStreamingService : LifecycleService() {
                     .also {
                         it.setAnalyzer(cameraExecutor) { imageProxy ->
                             streamingServer?.updateFrame(imageProxy)
+                            maybeUpdateTorch(imageProxy)
                             imageProxy.close()
                         }
                     }
@@ -157,7 +174,11 @@ class CameraStreamingService : LifecycleService() {
                 }
 
                 provider.unbindAll()
-                try {
+                // A rebind drops any active torch; reset our tracking so auto-flash
+                // re-evaluates from scratch against the newly bound camera.
+                torchOn = false
+                lastTorchEval = 0L
+                camera = try {
                     provider.bindToLifecycle(this, cameraSelector, imageAnalyzer)
                 } catch (e: Exception) {
                     // Requested lens may be unusable on this device; fall back to default.
@@ -169,10 +190,79 @@ class CameraStreamingService : LifecycleService() {
         }, ContextCompat.getMainExecutor(this))
     }
 
+    /**
+     * When auto-flash is enabled and the active lens has a torch, turn the torch on while the
+     * scene is dark and off once it's bright again. Evaluation is throttled and uses hysteresis
+     * to avoid flickering. Cheap: samples the already-available Y (luma) plane.
+     */
+    private fun maybeUpdateTorch(imageProxy: ImageProxy) {
+        val cam = camera ?: return
+        val canFlash = cam.cameraInfo.hasFlashUnit()
+
+        if (!CameraSettings.autoFlash || !canFlash) {
+            if (torchOn) {
+                cam.cameraControl.enableTorch(false)
+                torchOn = false
+            }
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        if (now - lastTorchEval < TORCH_EVAL_INTERVAL_MS) return
+        lastTorchEval = now
+
+        val luma = averageLuminance(imageProxy)
+        val shouldBeOn = if (torchOn) luma < TORCH_OFF_LUMA else luma < TORCH_ON_LUMA
+        if (shouldBeOn != torchOn) {
+            cam.cameraControl.enableTorch(shouldBeOn)
+            torchOn = shouldBeOn
+        }
+    }
+
+    /** Average brightness (0..255) of a sparse sample of the image's luma plane. */
+    private fun averageLuminance(imageProxy: ImageProxy): Int {
+        val plane = imageProxy.planes.firstOrNull() ?: return 0
+        val buffer = plane.buffer
+        val rowStride = plane.rowStride
+        val pixelStride = plane.pixelStride
+        val width = imageProxy.width
+        val height = imageProxy.height
+        if (width <= 0 || height <= 0) return 0
+
+        val stepX = (width / 32).coerceAtLeast(1)
+        val stepY = (height / 32).coerceAtLeast(1)
+        var sum = 0L
+        var count = 0
+        var y = 0
+        while (y < height) {
+            val rowStart = y * rowStride
+            var x = 0
+            while (x < width) {
+                val idx = rowStart + x * pixelStride
+                if (idx < buffer.limit()) {
+                    sum += (buffer.get(idx).toInt() and 0xFF)
+                    count++
+                }
+                x += stepX
+            }
+            y += stepY
+        }
+        return if (count > 0) (sum / count).toInt() else 0
+    }
+
     private fun stopStreaming() {
         isStreamingActive = false
         streamingServer?.stop()
         streamingServer = null
+        if (torchOn) {
+            try {
+                camera?.cameraControl?.enableTorch(false)
+            } catch (e: Exception) {
+                // Camera may already be released; unbindAll below clears the torch anyway.
+            }
+            torchOn = false
+        }
+        camera = null
         cameraProvider?.unbindAll()
         cameraExecutor.shutdown()
         releaseWakeLock()

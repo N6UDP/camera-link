@@ -53,8 +53,10 @@ object CameraSettings {
     private const val KEY_LENS = "lens"
     private const val KEY_RESOLUTION = "resolution"
     private const val KEY_QUALITY = "jpeg_quality"
+    private const val KEY_AUTO_FLASH = "auto_flash"
 
     const val DEFAULT_QUALITY = 80
+    const val DEFAULT_AUTO_FLASH = false
     val DEFAULT_LENS = CameraLens.WIDE
     val DEFAULT_RESOLUTION = StreamResolution.HD
 
@@ -65,6 +67,14 @@ object CameraSettings {
     @Volatile var resolution: StreamResolution = DEFAULT_RESOLUTION
         private set
     @Volatile var jpegQuality: Int = DEFAULT_QUALITY
+        private set
+
+    /**
+     * When enabled, the streaming service turns the camera torch on automatically while the
+     * scene is too dark (and the active lens has a flash unit). Read live by the frame
+     * analyzer, so it takes effect without a camera rebind.
+     */
+    @Volatile var autoFlash: Boolean = DEFAULT_AUTO_FLASH
         private set
 
     /**
@@ -82,6 +92,7 @@ object CameraSettings {
         lens = CameraLens.fromId(prefs.getString(KEY_LENS, null)) ?: DEFAULT_LENS
         resolution = StreamResolution.fromId(prefs.getString(KEY_RESOLUTION, null)) ?: DEFAULT_RESOLUTION
         jpegQuality = prefs.getInt(KEY_QUALITY, DEFAULT_QUALITY).coerceIn(1, 100)
+        autoFlash = prefs.getBoolean(KEY_AUTO_FLASH, DEFAULT_AUTO_FLASH)
     }
 
     private fun prefs() =
@@ -107,5 +118,13 @@ object CameraSettings {
         jpegQuality = clamped
         prefs()?.edit()?.putInt(KEY_QUALITY, clamped)?.apply()
         // No rebind needed; the encoder reads jpegQuality per frame.
+    }
+
+    fun setAutoFlash(value: Boolean) {
+        if (value == autoFlash) return
+        autoFlash = value
+        prefs()?.edit()?.putBoolean(KEY_AUTO_FLASH, value)?.apply()
+        // No rebind needed; the frame analyzer reads autoFlash live and toggles the torch.
+        // When turned off, the analyzer turns the torch off on its next frame.
     }
 }

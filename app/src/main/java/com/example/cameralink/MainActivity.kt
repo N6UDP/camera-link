@@ -608,6 +608,7 @@ fun CameraSettingsCard() {
     var lens by remember { mutableStateOf(CameraSettings.lens) }
     var resolution by remember { mutableStateOf(CameraSettings.resolution) }
     var quality by remember { mutableStateOf(CameraSettings.jpegQuality.toFloat()) }
+    var autoFlash by remember { mutableStateOf(CameraSettings.autoFlash) }
     var availableLenses by remember { mutableStateOf(CameraLens.entries.toSet()) }
     var showPreview by remember { mutableStateOf(false) }
 
@@ -727,8 +728,37 @@ fun CameraSettingsCard() {
                 valueRange = 10f..100f
             )
 
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Auto flash in low light",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.LightGray
+                    )
+                    Text(
+                        text = "Turns the torch on automatically when the scene is dark (back lens with flash only).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                }
+                Switch(
+                    checked = autoFlash,
+                    onCheckedChange = {
+                        autoFlash = it
+                        CameraSettings.setAutoFlash(it)
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
             Text(
-                text = "Tip: append ?camera=telephoto&res=1080&q=70 to the stream/snapshot URL to override.",
+                text = "Tip: append ?camera=telephoto&res=1080&q=70&autoflash=1 to the stream/snapshot URL to override.",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color.Gray
             )
